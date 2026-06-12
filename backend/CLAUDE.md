@@ -7,6 +7,16 @@ cd backend
 uv sync --extra dev   # Install all dependencies including test/lint tools
 ```
 
+## Application Layout
+
+- `app/main.py` — app factory + lifespan (DB init, market source start, 30s snapshot task, static mount)
+- `app/db/` — sqlite3 layer: `schema.sql`, lazy `init_db()`, seed data. DB path defaults to `<repo>/db/finally.db`, override with `FINALLY_DB_PATH`
+- `app/services/` — business logic: `portfolio.py` (trades, valuation, snapshots), `watchlist.py`, `chat.py` (LLM orchestration), `llm.py` (LiteLLM/OpenRouter/Cerebras + `LLM_MOCK` mode), `validation.py`
+- `app/routers/` — thin HTTP layer mapping `ValidationError` → 400, `NotWatchedError` → 404, `ChatUnavailableError` → 503
+- `app/market/` — market data subsystem (see below)
+
+Run locally: `uv run uvicorn app.main:app --port 8000` (serves `backend/static/` if present).
+
 ## Market Data API
 
 The market data subsystem lives in `app/market/`. Use these imports:

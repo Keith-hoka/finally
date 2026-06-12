@@ -1,0 +1,22 @@
+services:
+  app:
+    build: ..
+    environment:
+      - LLM_MOCK=true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.60.0-noble
+    depends_on:
+      app:
+        condition: service_healthy
+    working_dir: /tests
+    volumes:
+      - .:/tests
+    environment:
+      - BASE_URL=http://app:8000
+    command: sh -c "npm ci && npx playwright test"

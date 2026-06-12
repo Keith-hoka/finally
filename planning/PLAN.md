@@ -454,3 +454,33 @@ The container is designed to deploy to AWS App Runner, Render, or any container 
 - Portfolio visualization: heatmap renders with correct colors, P&L chart has data points
 - AI chat (mocked): send a message, receive a response, trade execution appears inline
 - SSE resilience: disconnect and verify reconnection
+
+---
+
+## 13. Review Notes (2026-06-11)
+
+### Questions & Clarifications
+
+1. **Volume mount contradiction (Section 11).** The plan says the database persists via a *named* Docker volume (`-v finally-data:/app/db`) and also that "the `db/` directory in the project root maps to `/app/db`". These are different mechanisms — a named volume does not map to the project's `db/` directory; only a bind mount (`-v $(pwd)/db:/app/db`) does. Pick one and state it consistently (bind mount is simpler to inspect for a course; named volume is more portable).
+2. **"Daily change %" is undefined for the simulator (Sections 2, 10).** The watchlist shows daily change %, but the simulator has no concept of a previous close. Define the baseline explicitly: seed price? price at session start? Without this, each agent will pick a different answer.
+3. **Tickers with positions but not on the watchlist.** If the user removes AAPL from the watchlist while holding AAPL shares, does the price stream still include it? Positions need live prices for P&L. Section 6 says the stream covers "all tickers known to the system" and equates that to the watchlist — clarify it should be watchlist ∪ position tickers.
+4. **Trading tickers not on the watchlist.** Is buying a ticker that isn't streamed allowed? If so, where does the fill price come from (the cache won't have it)? Simplest rule: a trade on an unknown ticker first registers it with the data source, or is rejected with a clear error.
+5. **Unknown/invalid tickers.** The simulator can happily simulate "FAKE" — should it? What seed price does it use for a ticker outside the default ten? With Massive, an invalid ticker returns nothing. Define validation behavior for `POST /api/watchlist` and trades (e.g., uppercase 1-5 letters, simulator assigns a seed price of ~$100, Massive rejects unknown symbols).
+6. **Trade input validation.** Quantity is fractional — define the bounds: reject zero/negative, any minimum increment, any maximum precision? This affects portfolio math and tests.
+7. **Position row at quantity zero.** When a position is fully sold, is the row deleted or kept with `quantity=0`? (UNIQUE constraint suggests upsert logic — deletion is cleaner for the heatmap/table.)
+8. **Snapshot table growth.** Every 30 seconds indefinitely means ~2,880 rows/day forever. Fine for a course demo, but state whether `/api/portfolio/history` returns everything or the last N points, so the P&L chart doesn't degrade on long-running volumes.
+9. **Missing `OPENROUTER_API_KEY` at startup.** Section 5 marks it required, but mock mode claims "development without an API key". Define the behavior when the key is absent and `LLM_MOCK` is not true: fail fast at startup, or serve everything and return an error only from `/api/chat`? (The latter is friendlier.)
+10. **Mock LLM contract is unspecified.** E2E tests assert "trade execution appears inline", so the mock must deterministically return a trade for some trigger input. Specify the mock behavior (e.g., any message containing "buy" returns a fixed buy trade) so backend and test agents agree.
+11. **Chat history bounds.** "Recent conversation history" — how many messages are sent to the LLM, and is there any way to clear the conversation?
+12. **Skill name mismatch (Section 9).** The text says "cerebras-inference skill" but the available skill is named `cerebras`. Use the exact name to avoid agent confusion.
+13. **Massive poll interval configuration.** Section 6 calls the interval "configurable" but Section 5 defines no env var for it. Either add `MASSIVE_POLL_SECONDS` (default 15) or drop "configurable".
+14. **SSE event semantics when prices are stale.** With Massive polling every 15s but SSE pushing every 500ms, the same price repeats ~30 times. Should events be emitted only on change (cleaner flash animations) or on every tick (simpler heartbeat/connection liveness)? Recommend: emit on change, plus a periodic heartbeat comment to keep the connection alive.
+
+### Opportunities to Simplify
+
+- **Pick one chart library.** Section 10 offers "Lightweight Charts or Recharts" — Recharts is SVG-based, not canvas, so it contradicts the stated preference. Just name Lightweight Charts and remove the choice.
+- **Drop `docker-compose.yml`.** The start/stop scripts already wrap `docker run`, and Section 3 explicitly says "no docker-compose for production". The optional wrapper adds a second launch path to keep in sync for little gain (the test compose file in `test/` stays).
+- **Simulator scope.** Correlated cross-ticker moves and random "event" spikes are polish, not core. Plain per-ticker GBM is enough for v1; flag correlation/events as a stretch so agents don't gold-plate before the app works end to end.
+- **Watchlist endpoint overlap.** `GET /api/watchlist` "with latest prices" duplicates what SSE delivers continuously. Returning just the tickers (frontend gets prices from the stream within ~500ms) removes a cache dependency from the REST layer. Keep prices only if the initial paint must be instant.
+- **Trim frontend unit tests.** The E2E suite already covers flash animations, watchlist CRUD, portfolio display, and chat rendering through a real browser. Frontend unit tests could be limited to pure calculation/formatting helpers, avoiding a parallel mock-heavy test suite that duplicates Playwright coverage.
+- **Simpler keys for upsert tables.** `watchlist` and `positions` each carry a UUID `id` plus a UNIQUE `(user_id, ticker)` constraint. Using `(user_id, ticker)` as the primary key drops a column and makes upserts natural. (Keep UUIDs for the append-only `trades`, `portfolio_snapshots`, and `chat_messages`.)
